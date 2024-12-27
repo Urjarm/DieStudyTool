@@ -22,45 +22,72 @@ import tqdm
 
 import Orange
 
-def apply_circle_crop(src, img_size=224, percentage=0.95):
+########################################################################
+'''Functions for preprocessing. For each implementation, two function
+exist:
+- the first one applies the implementation of the function to one image
+- the second one will actually used for preprocessing, iterating through
+   all images and run the first function on them.'''
+########################################################################
+
+'''Circle cropping function. When resize is disabled, the image returned
+is not resized.'''
+def apply_circle_crop(src, img_size=224, percentage=0.95, resize=True):
 	image = cv2.imread(src)
-	image = cv2.resize(image, (img_size, img_size)) 
-	circle_img = np.zeros((img_size, img_size), np.uint8)
-	cv2.circle(circle_img, ((int)(img_size/2),(int)(img_size/2)), 
-			int(img_size/2*percentage), 1, thickness=-1)
+	if resize:
+		image = cv2.resize(image, (img_size, img_size)) 
+
+	height, width, _ = image.shape
+	circle_img = np.zeros((height, width), np.uint8)
+	cv2.circle(circle_img, ((int)(width/2),(int)(height/2)), 
+			int(max(height, width)/2*percentage), 1, thickness=-1)
 	image = cv2.bitwise_and(image, image, mask=circle_img)
 
 	return image
 
-def circle_crop_directory(src, target, img_size=224, percentage=0.95):
-	
+''' Applies the circle crop function on every image in src and saves
+the comverted copy in target.'''
+def circle_crop_directory(src, target, img_size=224, 
+						  percentage=0.95, resize=True):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
 			img = os.path.join(root, name)
-			image = apply_circle_crop(img, img_size, percentage)
+			image = apply_circle_crop(img, img_size, percentage, resize)
 			cv2.imwrite(os.path.join(target, name), image)
 
-
-def apply_grayscale(src, img_size=224):
+'''Grayscales the image. When keep_ratio is set to True, the ratio 
+between height and width is kept for the returned image.'''
+def apply_grayscale(src, img_size=224, keep_ratio=False):
 	image = cv2.imread(src)
 	try:
 		image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 	except:
 		print(src)
-	image = cv2.resize(image, (img_size, img_size), 
+	
+	if keep_ratio:
+		height, width = image.shape
+		factor = float(img_size) / max(height, width)
+
+		image = cv2.resize(image, (int(width*factor), int(height*factor)), 
+					interpolation = cv2.INTER_LINEAR)
+	else:
+		image = cv2.resize(image, (img_size, img_size), 
 					interpolation = cv2.INTER_LINEAR)
 
 	return image
 
-def grayscale_directory(src, target, img_size=224):
+''' Applies the grayscaling function on every image in src and saves
+the comverted copy in target.'''
+def grayscale_directory(src, target, img_size=224, keep_ratio = False):
 	
 		for root, dirs, files in os.walk(src, topdown=False):
 			for name in files:
 				img = os.path.join(root, name)
-				image = apply_grayscale(img, img_size)
+				image = apply_grayscale(img, img_size, keep_ratio)
 				cv2.imwrite(os.path.join(target, name), image)
 
-
+'''Applies the CLAHE algorithm for histogram equalization on the image
+and returnes it.'''
 def apply_clahe(src):
 
     image = cv2.imread(src)
@@ -70,6 +97,8 @@ def apply_clahe(src):
 
     return equalized
 
+'''Applies the CLAHE-conversion function on every image in src and
+saves the converted copy in target.'''
 def clahe_directory(src, target, img_size=224):
 
 	for root, dirs, files in os.walk(src, topdown=False):
@@ -78,6 +107,8 @@ def clahe_directory(src, target, img_size=224):
 			image = apply_clahe(img)
 			cv2.imwrite(os.path.join(target, name), image)
 
+'''Removes the background of the image via image segmentation with the 
+remove function from rembg.'''
 def remove_background(src, image_return_size=224):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size)) 
@@ -86,6 +117,8 @@ def remove_background(src, image_return_size=224):
 
 	return image
 
+'''Applies the background removing function with rembg on every image 
+in src and saves the converted copy in target.'''
 def remove_background_directory(src, target, img_size=224):
 
 	for root, dirs, files in os.walk(src, topdown=False):
@@ -94,12 +127,15 @@ def remove_background_directory(src, target, img_size=224):
 			image = remove_background(img, img_size)
 			cv2.imwrite(os.path.join(target, name), image)
 
+'''Uses LaPlace operator from OpenCV on one image.'''
 def apply_laplace(src, image_return_size=224):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size)) 
 	image = cv2.Laplacian(image, cv2.CV_16S, None, 9)
 	return image
 
+'''Applies the apply_laplace function on every image in src and 
+saves the converted copy in target.'''
 def apply_laplace_directory(src, target, img_size=224):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -107,12 +143,17 @@ def apply_laplace_directory(src, target, img_size=224):
 			image = apply_laplace(img, img_size)
 			cv2.imwrite(os.path.join(target, name), image)
 
+'''Applies the fastNlMeansDenoising-function from OpenCV on a 
+grayscale image.'''
 def apply_opencv_denoise(src, image_return_size=224, h=15):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size)) 
 	image = cv2.fastNlMeansDenoising(image, None, h, templateWindowSize=9, searchWindowSize=27)
 	return image
 
+'''Applies a denoise function using OpenCV's fastNlMeansDenoising-
+function on every image in src and saves the converted copy in target.
+'''
 def apply_opencv_denoise_directory(src, target, img_size=224, h=15):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -120,12 +161,15 @@ def apply_opencv_denoise_directory(src, target, img_size=224, h=15):
 			image = apply_opencv_denoise(img, img_size, h)
 			cv2.imwrite(os.path.join(target, name), image)
 
+'''Applies the median blur function on one image.'''
 def apply_median_blur(src, image_return_size=224, h=5):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size)) 
 	image = cv2.medianBlur(image, h)
 	return image
 
+'''Runs a function that applies the median blur filter on every image in
+src and saves the converted copy in target.'''
 def apply_median_blur_directory(src, target, img_size=224, h=5):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -133,13 +177,15 @@ def apply_median_blur_directory(src, target, img_size=224, h=5):
 			image = apply_median_blur(img, img_size, h)
 			cv2.imwrite(os.path.join(target, name), image)
 
-
+'''Applies a gaussian blur function to an image.'''
 def apply_gaussian_blur(src, image_return_size=224, h=5):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size)) 
 	image = cv2.GaussianBlur(image, (h, h), 2)
 	return image
 
+'''Applies the gaussian blur filter on every image in src and saves the 
+converted copy in target.'''
 def apply_gaussian_blur_directory(src, target, img_size=224, h=5):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -147,13 +193,15 @@ def apply_gaussian_blur_directory(src, target, img_size=224, h=5):
 			image = apply_gaussian_blur(img, img_size, h)
 			cv2.imwrite(os.path.join(target, name), image)
 
-
+'''Applies a bilateral blur on an image.'''
 def apply_bilateral_blur(src, image_return_size=224, h=5, stre=150):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size)) 
 	image = cv2.bilateralFilter(image, h, stre, 10)
 	return image
-			
+
+'''Applies a bilateral blur filter on every image in src and saves the 
+converted copy in target.'''		
 def apply_bilateral_blur_directory(src, target, img_size=224, h=5, stre=150):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -161,12 +209,14 @@ def apply_bilateral_blur_directory(src, target, img_size=224, h=5, stre=150):
 			image = apply_bilateral_blur(img, img_size, h, stre)
 			cv2.imwrite(os.path.join(target, name), image)
 
-
+'''Applies the median blur function without resizing the image.'''
 def apply_median_blur_no_resize(src, h=9):
 	image = cv2.imread(src)
 	image = cv2.medianBlur(image, h)
 	return image
 
+'''Applies a median blur filter without resizing the image on every 
+image in src and saves the converted copy in target.'''
 def apply_median_blur_no_resize_directory(src, target, h=9):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -174,7 +224,7 @@ def apply_median_blur_no_resize_directory(src, target, h=9):
 			image = apply_median_blur_no_resize(img, h)
 			cv2.imwrite(os.path.join(target, name), image)
 
-
+'''Applies standard histogram equalization on an image.'''
 def apply_histogram_equalization(src, image_return_size=224):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size))
@@ -182,6 +232,8 @@ def apply_histogram_equalization(src, image_return_size=224):
 	image = cv2.equalizeHist(image, None)
 	return image
 
+'''Applies standard histogram equalization on every image in src and 
+saves the converted copy in target.'''
 def histogram_equalization_directory(src, target, img_size=224):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -189,7 +241,7 @@ def histogram_equalization_directory(src, target, img_size=224):
 			image = apply_histogram_equalization(img, img_size)
 			cv2.imwrite(os.path.join(target, name), image)
 
-
+'''Applies segmentation by adaptive thresholding on an image.'''
 def adaptive_threshhold_segmentation(src, image_return_size=224):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size))
@@ -199,6 +251,8 @@ def adaptive_threshhold_segmentation(src, image_return_size=224):
 							   cv2.THRESH_BINARY_INV, 11, 1)
 	return image
 
+'''Applies segmentation by adaptive thresholding on every image in src 
+and saves the converted copy in target.'''
 def adaptive_threshhold_segmentation_directory(src, target, img_size=224):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -206,26 +260,33 @@ def adaptive_threshhold_segmentation_directory(src, target, img_size=224):
 			image = adaptive_threshhold_segmentation(img, img_size)
 			cv2.imwrite(os.path.join(target, name), image)
 
-def apply_denoise_tv_chambolle(src, image_return_size=224, weight=0.1):
+'''Applies Chambolle's total variation denoise function on one image.'''
+def apply_denoise_tv_chambolle(src, image_return_size=224, weight=0.1, resize=True):
 	image = cv2.imread(src)
-	image = cv2.resize(image, (image_return_size, image_return_size))
+	if resize:
+		image = cv2.resize(image, (image_return_size, image_return_size))
 	image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 	image = denoise_tv_chambolle(image, weight, channel_axis=None)*255
 	#image = cv2.fromarray(image)
 	return image
 
-def apply_denoise_tv_chambolle_directory(src, target, img_size=224, weight=0.1):
+'''Applies Chambolle's total variation denoise function on every image 
+in src and saves the converted copy in target.'''
+def apply_denoise_tv_chambolle_directory(src, target, img_size=224, weight=0.1, resize=True):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
 			img = os.path.join(root, name)
-			image = apply_denoise_tv_chambolle(img, img_size, weight)
+			image = apply_denoise_tv_chambolle(img, img_size, weight, resize)
 			cv2.imwrite(os.path.join(target, name), image)
 
-# Source: https://learnopencv.com/moving-object-detection-with-opencv/
+'''Another version of background remover.'''
+# Source: https://scikit-image.org/docs/stable/user_guide/tutorial_segmentation.html
 def remove_background_V2(src, image_return_size=224):
 	image = cv2.imread(src)
 	image = cv2.resize(image, (image_return_size, image_return_size))
 	image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+
 	coins = skimage.data.coins()
 	edges = skimage.feature.canny(coins)
 	fill_coins = scipy.ndimage.binary_fill_holes(edges)
@@ -240,6 +301,8 @@ def remove_background_V2(src, image_return_size=224):
 
 	return int_arr
 
+'''Applies another background remover technique on every image in src 
+and saves the converted copy in target.'''
 def remove_background_V2_directory(src, target, img_size=224):
 	for root, dirs, files in os.walk(src, topdown=False):
 		for name in files:
@@ -268,7 +331,9 @@ def get_paths(data_dir):
 			result.append(img_pth)
 	return result
 
-''' Score computation functions ----------------------------------- '''
+########################################################################
+''' Score computation functions'''
+########################################################################
 
 def compute_assigning_score(
 		path_to_solution: str, 
@@ -358,7 +423,7 @@ def compute_clustering(
 	meta-data columns.
 	Compute distances.
 	Cluster the data according to the distances.
-	turn it into a dictionary.'''
+	Turn it into a dictionary.'''
 	data_file = pd.read_csv(distance_score_file_name)
 	
 	if(number_of_images > 0):
@@ -472,8 +537,8 @@ def compute_clustering_AGLP(
 	''' Read in the data from "distance_score_file_name", cut off the
 	meta-data columns.
 	Compute distances.
-	Cluster the data according to the distances.
-	turn it into a dictionary.'''
+	Cluster the data with the AGLP algorithm according to the distances.
+	Turn it into a dictionary.'''
 	data_file = pd.read_csv(distance_score_file_name)
 	
 	if(number_of_images > 0):
@@ -547,7 +612,11 @@ def create_comparison_file(
 		target_file: str = "overview.csv", 
 		number_of_images: int = -1, 
 		true_values_file: str = "data_coins/class VI final list.xlsx",
-		distance_function: list[int] = [1,1]) -> None:
+		distance_function: list[int] = [1,1],
+		clusterers: list[AgglomerativeClustering] = [
+			AgglomerativeClustering(n_clusters=1, linkage='complete', metric='precomputed'),
+			AgglomerativeClustering(n_clusters=1, linkage='complete', metric='precomputed')
+		]) -> None:
 	'''Creates a file for multiple files to compare in one .csv-file.
 	
 	The returned dataframe has three columns for positives(Recall), 
@@ -564,15 +633,19 @@ def create_comparison_file(
 	result = pd.DataFrame([], columns=columns)
 
 	for i in range(start, end + 1):
-		clusterer = AgglomerativeClustering(
-			n_clusters=i, linkage='complete', metric='precomputed')
+		for j in range(len(distance_files)):
+			try:
+				clusterers[j].n_clusters = i
+			except Exception as e:
+				print(e)
+
 
 		# Compute the results for each clustering
 		result_i = []
 		for j in range(len(distance_files)):
 			temp = compute_assigning_score(
 				true_values_file, distance_files[j], 
-				clusterer=clusterer, number_of_images=number_of_images,
+				clusterer=clusterers[j], number_of_images=number_of_images,
 				distance_function=distance_function[j])
 			result_i += [temp[0][0], temp[1][0], temp[2]]
 

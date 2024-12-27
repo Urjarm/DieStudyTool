@@ -1,12 +1,11 @@
 # Path to the folder, where the images of the coins are. Use '\\' for 
 # Windows-paths and '/' for Linux-paths.
 # Example for Windows: "C:\\Folder\\...\\images\\"
-images_directory: str = "D:\\Studium\\Informatik\\9. Semester (Master)\\Masterarbeit\\Weitere Muenzsets\\GL_Bilder\\reverse\\"  # "D:\\Studium\\Informatik\\9. Semester (Master)\\Masterarbeit\\Weitere Muenzsets\\GL_Bilder\\reverse\\"
+images_directory: str = "D:\\Studium\\Informatik\\9. Semester (Master)\\Masterarbeit\\Weitere Muenzsets\\GL_Bilder\\reverse\\"  # "
 
 # Path were the preprocessed images and the results will be stored.
 # Same rules for the path as for "images_path"
-results_directory: str = "D:\\Studium\\Informatik\\9. Semester (Master)\\Masterarbeit\\Weitere Muenzsets\\GL_Bilder\\reverse_results\\" # "D:\\Studium\\Informatik\\9. Semester (Master)\\Masterarbeit\\Weitere Muenzsets\\GL_Bilder\\reverse_results\\"
-
+results_directory: str = "D:\\Studium\\Informatik\\9. Semester (Master)\\Masterarbeit\\Weitere Muenzsets\\GL_Bilder\\reverse_results\\" # "
 # Methods to use for matching and distance comnputation. The different
 # functions corresponding to the numbers are at the end of the
 # "kornia_matcher.py" file under 'class MatchingHandler'

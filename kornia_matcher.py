@@ -8,27 +8,30 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import pandas as pd
-#from kornia.feature.adalam import AdalamFilter
+from kornia.feature.adalam import AdalamFilter
 from kornia_moons.viz import *
 from kornia_moons.feature import *
 import sklearn.metrics
+import math
 
-from distance_matcher import detect_keypoints_and_match, detect_keypoints_and_descriptors_knn_match, detect_keypoints_and_match_SIFT, detect_keypoints_and_match_BRISK
+from typing import Any, Dict
+
+from distance_matcher import detect_keypoints_and_match, \
+    detect_keypoints_and_descriptors_knn_match, \
+        detect_keypoints_and_match_SIFT, \
+            detect_keypoints_and_match_BRISK
 import utils as utils
 
-'''Ideas to test:
+#######################################################################
+'''Utility functions'''
+#######################################################################
 
-- Implement resistance to affine image transformations. For example:
-try:
-    Fm, inliers = cv2.findFundamentalMat(mkpts1.detach().cpu().numpy(), 
-        mkpts2.detach().cpu().numpy(), cv2.USAC_ACCURATE, 1.0, 0.999, 100000)
-except:
-    print(len(mkpts1), len(mkpts2))
-    Fm, inliers = cv2.findFundamentalMat(mkpts1.detach().cpu().numpy(), 
-        mkpts2.detach().cpu().numpy(), cv2.USAC_ACCURATE, 1.0, 0.999, 100000)
-inliers = inliers > 0
-
-'''
+# https://kornia.github.io/tutorials/nbs/image_matching_lightglue.html
+def get_matching_keypoints(kp1, kp2, idxs):
+    mkpts1 = kp1[idxs[:, 0]]
+    mkpts2 = kp2[idxs[:, 1]]
+    #print(len(mkpts1), len(mkpts2))
+    return mkpts1, mkpts2
 
 # Convert tensor to binary tensor (for hamming distance)
 def binary(x, bits):
@@ -47,8 +50,9 @@ https://kornia.readthedocs.io/en/latest/feature.html#matching matching
 tab. The functions are named after the matcher used.'''
 #######################################################################
 
-''' x.sum().item()'''
-def kornia_matcher_test_nn(img1_name: str, img2_name: str, device: torch.device, 
+''' Nearest neighbour matching using DISK'''
+def kornia_matcher_test_nn(img1_name: str, img2_name: str, 
+                           device: torch.device, 
                            feature_extractor: KF.DISK) -> tuple:
     # Load images from the given paths
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
@@ -68,13 +72,14 @@ def kornia_matcher_test_nn(img1_name: str, img2_name: str, device: torch.device,
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        # Compute distances of the matching
+        # Compute nearest neighbour matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, kps1, img2, kps2
 
-''' Working distance for cutoff: 1.0'''
-def kornia_matcher_test_mnn(img1_name: str, img2_name: str, device: torch.device, 
+''' Mutual nearest neighbour matching using DISK'''
+def kornia_matcher_test_mnn(img1_name: str, img2_name: str, 
+                            device: torch.device, 
                            feature_extractor: KF.DISK) -> tuple:
     # Load images from the given paths
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
@@ -94,13 +99,14 @@ def kornia_matcher_test_mnn(img1_name: str, img2_name: str, device: torch.device
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        # Compute distances of the matching
+        # Compute mutual nearest neighbourmatching
         dists, idxs = KF.match_mnn(descs1, descs2)
     
     return dists, img1, kps1, img2, kps2
 
-''' No cutoff used here, used sum() instead'''
-def kornia_matcher_test_snn(img1_name: str, img2_name: str, device: torch.device, 
+'''Nerest neighbour distance ratio matching using DISK'''
+def kornia_matcher_test_snn(img1_name: str, img2_name: str, 
+                            device: torch.device, 
                            feature_extractor: KF.DISK) -> tuple:
     # Load images from the given paths
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
@@ -120,15 +126,19 @@ def kornia_matcher_test_snn(img1_name: str, img2_name: str, device: torch.device
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        # Compute distances of the matching
+        # Compute matching with Lowe's ratio test
         dists, idxs = KF.match_snn(descs1, descs2, th=0.85)
     
     return dists, img1, kps1, img2, kps2
 
-''' No cutoff used here, used sum() instead'''
-def kornia_matcher_test_smnn(img1_name: str, img2_name: str, device: torch.device, 
-                           feature_extractor: KF.DISK, th: float = 0.85, 
-                           hamming: bool = False) -> tuple:
+''' Mutual nearest neighbour distance ratio matching using DISK.
+It also offers options to match using Hamming distances or to compute
+a matching for images with different sizes (smaller than 224x224)'''
+def kornia_matcher_test_smnn(img1_name: str, img2_name: str, 
+                             device: torch.device, 
+                             feature_extractor: KF.DISK, 
+                             th: float = 0.85, hamming: bool = False, 
+                             const_size_set = False ) -> tuple:
     # Load images from the given paths
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
                            device=device)[None, ...]        
@@ -136,6 +146,33 @@ def kornia_matcher_test_smnn(img1_name: str, img2_name: str, device: torch.devic
                            device=device)[None, ...]
 
     with torch.inference_mode():
+        # Special case to concatinate images of different sizes
+        # (fill the missing pixels up with black)
+        if(const_size_set):
+             # MAXIMUM SIZE OF THE IMAGES SET HERE (224 standard)
+            new_img_h = new_img_w = 224
+
+            diffh_1, diffw_1 = new_img_h-img1.size(2), \
+                new_img_w-img1.size(3)
+            diffh_2, diffw_2 = new_img_h-img2.size(2), \
+                new_img_w-img2.size(3)
+
+            # Pad missing pixels evenly
+            img1 = torch.nn.functional.pad(input=img1, 
+                                           pad=(math.ceil(diffw_1/2), 
+                                                math.floor(diffw_1/2), 
+                                                math.ceil(diffh_1/2), 
+                                                math.floor(diffh_1/2)), 
+                                                mode='constant', 
+                                                value=0)
+            
+            img2 = torch.nn.functional.pad(input=img2, 
+                                           pad=(math.ceil(diffw_2/2), 
+                                                math.floor(diffw_2/2), 
+                                                math.ceil(diffh_2/2), 
+                                                math.floor(diffh_2/2)), 
+                                                mode='constant', 
+                                                value=0)
         # Concatinate images
         inp = torch.cat([img1, img2], dim=0)
 
@@ -147,21 +184,29 @@ def kornia_matcher_test_smnn(img1_name: str, img2_name: str, device: torch.devic
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        # Compute distances of the matching
+        # Compute matching
         # Hamming distance computation just for testing, works very bad
         if hamming:
             max = torch.max(torch.max(kps1), torch.max(kps2)).item()
-            hamming_dists = torch.from_numpy(sklearn.metrics.pairwise_distances(binary(kps1.cpu().to(dtype=torch.uint8), max), binary(kps2.cpu().to(dtype=torch.uint8), max), metric='hamming'))
+            hamming_dists = torch.from_numpy(
+                sklearn.metrics.pairwise_distances(
+                    binary(kps1.cpu().to(dtype=torch.uint8), max), 
+                    binary(kps2.cpu().to(dtype=torch.uint8), max), 
+                    metric='hamming'))
 
-            dists, idxs = KF.match_smnn(descs1, descs2, th=th, dm=hamming_dists)
+            dists, idxs = KF.match_smnn(descs1, descs2, th=th, 
+                                        dm=hamming_dists)
         else:
             dists, idxs = KF.match_smnn(descs1, descs2, th=th)
     
     return dists, img1, kps1, img2, kps2
 
-''' No cutoff used here, used len() instead'''
-def kornia_matcher_test_fginn(img1_name: str, img2_name: str, device: torch.device, 
-                           feature_extractor: KF.DISK) -> tuple:
+''' Mutual nearest neighbour distance ratio matching using DISK with 
+USAC_ACCURATE estimator for outlier detection.'''
+def kornia_matcher_test_smnn_estimator(img1_name: str, img2_name: str,
+                                        device: torch.device, 
+                                        feature_extractor: KF.DISK, 
+                                        th: float = 0.85) -> tuple:
     # Load images from the given paths
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
                            device=device)[None, ...]        
@@ -180,21 +225,60 @@ def kornia_matcher_test_fginn(img1_name: str, img2_name: str, device: torch.devi
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        # Computs LAFs
+        # Compute matching
+        dists, idxs = KF.match_smnn(descs1, descs2, th=th)
+        
+        mkpts1, mkpts2 = get_matching_keypoints(kps1, kps2, idxs)
+        
+    # Applying the estimator
+    Fm, inliers = cv2.findFundamentalMat(
+            kps1.detach().cpu().numpy(), 
+            kps2.detach().cpu().numpy(), 
+            cv2.USAC_ACCURATE, 1.0, 0.999, 100000)
+
+    inliers = inliers > 0
+    
+    return dists, img1, kps1, img2, kps2
+
+''' First to second geometrically inconsistend nearest neighbour using
+DISK.'''
+def kornia_matcher_test_fginn(img1_name: str, img2_name: str, 
+                              device: torch.device, 
+                              feature_extractor: KF.DISK) -> tuple:
+    # Load images from the given paths
+    img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
+                           device=device)[None, ...]        
+    img2 = K.io.load_image(img2_name, K.io.ImageLoadType.RGB32, 
+                           device=device)[None, ...]
+
+    with torch.inference_mode():
+        # Concatinate images
+        inp = torch.cat([img1, img2], dim=0)
+
+        # Use the feature_extractor, disk as the standard, to detect 
+        # the features of the concatinated image
+        num_features = 128
+        features1, features2 = feature_extractor(
+            inp, num_features, pad_if_not_divisible=True)
+        kps1, descs1 = features1.keypoints, features1.descriptors
+        kps2, descs2 = features2.keypoints, features2.descriptors
+
+        # Computs LAFs for fginn
         lafs1 = KF.laf_from_center_scale_ori(
             kps1[None], torch.ones(1, len(kps1), 1, 1, device=device))
         lafs2 = KF.laf_from_center_scale_ori(
             kps2[None], torch.ones(1, len(kps2), 1, 1, device=device))
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_fginn(descs1, descs2, lafs1, lafs2, 
                                      th=0.85)
     
     return dists, img1, kps1, img2, kps2
 
-''' No cutoff used here, used len() instead'''
-def kornia_matcher_test_adalam(img1_name: str, img2_name: str, device: torch.device, 
-                           feature_extractor: KF.DISK) -> tuple:
+''' AdaLAM with near standard configuration. Using again DISK.'''
+def kornia_matcher_test_adalam(img1_name: str, img2_name: str, 
+                               device: torch.device, 
+                               feature_extractor: KF.DISK) -> tuple:
     # Load images from the given paths
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
                            device=device)[None, ...]        
@@ -213,24 +297,35 @@ def kornia_matcher_test_adalam(img1_name: str, img2_name: str, device: torch.dev
     num_features = 2048
 
     with torch.inference_mode():
-
+        # Concatinate images
         inp = torch.cat([img1, img2], dim=0)
-        features1, features2 = feature_extractor(inp, num_features, pad_if_not_divisible=True)
+        features1, features2 = \
+            feature_extractor(inp, num_features, 
+                              pad_if_not_divisible=True)
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        lafs1 = KF.laf_from_center_scale_ori(kps1[None], 96 * torch.ones(1, len(kps1), 1, 1, device=device))
-        lafs2 = KF.laf_from_center_scale_ori(kps2[None], 96 * torch.ones(1, len(kps2), 1, 1, device=device))
+        # Compute LAFs
+        lafs1 = KF.laf_from_center_scale_ori(
+            kps1[None], 96 * torch.ones(1, len(kps1), 1, 1, 
+                                        device=device))
+        lafs2 = KF.laf_from_center_scale_ori(
+            kps2[None], 96 * torch.ones(1, len(kps2), 1, 1, 
+                                        device=device))
 
-        dists, idxs = KF.match_adalam(descs1, descs2, lafs1, lafs2, hw1=hw1, hw2=hw2, config=adalam_config)
+        # Compute matching
+        dists, idxs = KF.match_adalam(descs1, descs2, lafs1, lafs2, 
+                                      hw1=hw1, hw2=hw2, 
+                                      config=adalam_config)
         
     return dists, img1, descs1, img2, descs2
 
-''' No cutoff used here, used .sum().cpu().detach().numpy() instead'''
+''' LightGlue matcher using DISK'''
 def kornia_matcher_test_lightglue(img1_name: str, img2_name: str, 
                                   device: torch.device, 
                                   feature_extractor: KF.DISK, 
-                                  matcher: KF.LightGlueMatcher) -> tuple:
+                                  matcher: KF.LightGlueMatcher
+                                  ) -> tuple:
     # Load images from the given paths
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
                            device=device)[None, ...]        
@@ -241,24 +336,30 @@ def kornia_matcher_test_lightglue(img1_name: str, img2_name: str,
 
     hw1 = torch.tensor(img1.shape[2:], device=device)
     hw2 = torch.tensor(img2.shape[2:], device=device)
+
     with torch.no_grad():
+        # Concatinate images
         inp = torch.cat([img1, img2], dim=0)
         features1, features2 = feature_extractor(
             inp, num_features, pad_if_not_divisible=True)
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
+
+        # Compute LAFs
         lafs1 = KF.laf_from_center_scale_ori(
             kps1[None], torch.ones(
                 1, len(kps1), 1, 1, device=device))
         lafs2 = KF.laf_from_center_scale_ori(
             kps2[None], torch.ones(
                 1, len(kps2), 1, 1, device=device))
-        
-    dists, idxs = matcher(descs1, descs2, lafs1, 
-                          lafs2, hw1=hw1, hw2=hw2)
+    
+        # Computing matching
+        dists, idxs = matcher(descs1, descs2, lafs1, 
+                            lafs2, hw1=hw1, hw2=hw2)
 
     return dists, img1, kps1, img2, kps2, idxs
 
+'''LoFTR matcher, including keypoint detection and description.'''
 def kornia_matcher_test_LoFTR(img1_name, img2_name, device, matcher):
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
                            device=device)[None, ...]
@@ -289,7 +390,8 @@ def kornia_matcher_test_LoFTR(img1_name, img2_name, device, matcher):
 #
 #######################################################################
 
-''' Using the nn-matcher'''
+''' Computing Shi-Tomasi cornerness function on the images before
+using DISK and smnn for matching'''
 def kornia_detector_test_gftt_response(img1_name, img2_name, device, 
                                        feature_extractor):
     # Load images from the given paths
@@ -316,13 +418,13 @@ def kornia_detector_test_gftt_response(img1_name, img2_name, device,
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_smnn(descs1, descs2, th=0.85)
     
     return dists, img1, kps1, img2, kps2
 
-''' Working distance for cutoff: 1.0
-Using the snn-matcher'''
+''' Computing the Difference-of-Gaussian response function on the images 
+before using DISK and smnn for matching'''
 def kornia_detector_test_dog_response_single(
         img1_name, img2_name, device, feature_extractor):
     # Load images from the given paths
@@ -349,7 +451,7 @@ def kornia_detector_test_dog_response_single(
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_smnn(descs1, descs2, th=0.85)
     
     return dists, img1, kps1, img2, kps2
@@ -362,6 +464,8 @@ def kornia_detector_test_dog_response_single(
 #
 #######################################################################
 
+'''Computing DenseSIFT Descriptors on the images before using the
+nearest neighbour function for matching'''
 def kornia_matcher_test_descriptor_DenseSIFTDescriptor(
         img1_name, img2_name, device, feature_descriptor):
     # Load images from the given paths
@@ -379,11 +483,13 @@ def kornia_matcher_test_descriptor_DenseSIFTDescriptor(
         descs1 = torch.flatten(features1, 1, 2)
         descs2 = torch.flatten(features2, 1, 2)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
 
+'''Computing SIFT Descriptors on patches of the images before using the
+nearest neighbour function for matching.'''
 def kornia_matcher_test_descriptor_SIFTDescriptor(
         img1_name, img2_name, device, LocalFeature):
     # Load images from the given paths
@@ -422,13 +528,14 @@ def kornia_matcher_test_descriptor_SIFTDescriptor(
         descs1 = LocalFeature(img1_p_tensor)
         descs2 = LocalFeature(img2_p_tensor)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
 
-''' Needs a patch_size of 8. Used to compare with larger patch_size of
-32 to check for better.'''
+''' The same as "kornia_matcher_test_descriptor_SIFTDescriptor" but 
+with a patch size of only 8. Patch size could be turned in an argument,
+making this function obsolete.'''
 def kornia_matcher_test_descriptor_SIFTDescriptor_8(
         img1_name, img2_name, device, LocalFeature):
     # Load images from the given paths
@@ -467,11 +574,13 @@ def kornia_matcher_test_descriptor_SIFTDescriptor_8(
         descs1 = LocalFeature(img1_p_tensor)
         descs2 = LocalFeature(img2_p_tensor)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
 
+'''Compute Multiple Kernel local descriptors of patches of the images 
+before using the nearest neighbour function for matching.'''
 def kornia_matcher_test_descriptor_MKDDescriptor(
         img1_name, img2_name, device, LocalFeature):
     # Load images from the given paths
@@ -510,11 +619,13 @@ def kornia_matcher_test_descriptor_MKDDescriptor(
         descs1 = LocalFeature(img1_p_tensor)
         descs2 = LocalFeature(img2_p_tensor)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
 
+'''Computes Hardnet descriptors of patches of the images 
+before using the nearest neighbour function for matching.'''
 def kornia_matcher_test_descriptor_Hardnet(
         img1_name, img2_name, device, LocalFeature):
     # Load images from the given paths
@@ -553,11 +664,15 @@ def kornia_matcher_test_descriptor_Hardnet(
         descs1 = LocalFeature(img1_p_tensor)
         descs2 = LocalFeature(img2_p_tensor)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
 
+'''Computes Hardnet8 descriptors of patches of the images 
+before using the nearest neighbour function for matching. Only differs
+from "kornia_matcher_test_descriptor_Hardnet" in the argument, so it is
+technically also obsolete.'''
 def kornia_matcher_test_descriptor_Hardnet8(
         img1_name, img2_name, device, LocalFeature):
     # Load images from the given paths
@@ -596,11 +711,13 @@ def kornia_matcher_test_descriptor_Hardnet8(
         descs1 = LocalFeature(img1_p_tensor)
         descs2 = LocalFeature(img2_p_tensor)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
 
+''' Computes HyNet descriptors of patches of the images 
+before using the nearest neighbour function for matching.'''
 def kornia_matcher_test_descriptor_HyNet(
         img1_name, img2_name, device, LocalFeature):
     # Load images from the given paths
@@ -639,11 +756,13 @@ def kornia_matcher_test_descriptor_HyNet(
         descs1 = LocalFeature(img1_p_tensor)
         descs2 = LocalFeature(img2_p_tensor)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
 
+'''Computes TFeat descriptors of patches of the images 
+before using the nearest neighbour function for matching.'''
 def kornia_matcher_test_descriptor_TFeat(
         img1_name, img2_name, device, LocalFeature):
     # Load images from the given paths
@@ -681,11 +800,13 @@ def kornia_matcher_test_descriptor_TFeat(
         descs1 = LocalFeature(img1_p_tensor)
         descs2 = LocalFeature(img2_p_tensor)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
 
+'''Computes SOSNet descriptors of patches of the images 
+before using the nearest neighbour function for matching.'''
 def kornia_matcher_test_descriptor_SOSNet(
         img1_name, img2_name, device, LocalFeature):
     # Load images from the given paths
@@ -723,7 +844,7 @@ def kornia_matcher_test_descriptor_SOSNet(
         descs1 = LocalFeature(img1_p_tensor)
         descs2 = LocalFeature(img2_p_tensor)
 
-        # Compute distances of the matching
+        # Compute matching
         dists, idxs = KF.match_nn(descs1, descs2)
     
     return dists, img1, descs1, img2, descs2
@@ -737,6 +858,8 @@ def kornia_matcher_test_descriptor_SOSNet(
 #######################################################################
 
 # Tutorial: https://kornia.github.io/tutorials/nbs/line_detection_and_matching_sold2.html
+'''Detects and describes SOLD2 keypoints and matches them with the 
+corresponding matching function.'''
 def kornia_matcher_test_Desc_and_Dete_SOLD2_detector(
         img1_name, img2_name, device, feature_desc_and_dete):
     # Load images from the given paths
@@ -757,7 +880,7 @@ def kornia_matcher_test_Desc_and_Dete_SOLD2_detector(
         desc1 = outputs["dense_desc"][0]
         desc2 = outputs["dense_desc"][1]
 
-        # Compute distances of the matching
+        # Compute matching
         with torch.inference_mode():
             matches = feature_desc_and_dete.match(
                 line_seg1, line_seg2, desc1[None], desc2[None])
@@ -770,6 +893,8 @@ def kornia_matcher_test_Desc_and_Dete_SOLD2_detector(
     return match_indices, img1, line_seg1, img2, line_seg2
 
 # https://kornia.readthedocs.io/en/latest/feature.html#kornia.feature.DeDoDe
+'''Detects and describes DeDoDe keypoints and matches them with the 
+smnn function.'''
 def kornia_matcher_test_Desc_and_Dete_DeDoDo(
         img1_name, img2_name, device, feature_desc_and_dete):
     # Load images from the given paths
@@ -784,13 +909,15 @@ def kornia_matcher_test_Desc_and_Dete_DeDoDo(
         # Use the feature_descriptor given through the arguments
         keypoints, scores, features = feature_desc_and_dete(imgs)
 
-        # Compute distances of the matching
         kps1, descs1 = features[0], features[0]
         kps2, descs2 = features[1], features[1]
 
+        # Compute matching
         dists, idxs = KF.match_smnn(descs1, descs2, th=0.85)
     return dists, img1, descs1, img2, descs2
 
+'''Detects and describes DISK keypoints and matches them with the 
+smnn function.'''
 def kornia_matcher_test_Desc_and_Dete_Disk(
         img1_name, img2_name, device, feature_desc_and_dete):
     # Load images from the given paths
@@ -809,13 +936,12 @@ def kornia_matcher_test_Desc_and_Dete_Disk(
         kps1, descs1 = features1.keypoints, features1.descriptors
         kps2, descs2 = features2.keypoints, features2.descriptors
 
-        # Compute distances of the matching
-        #max = torch.max(torch.max(kps1), torch.max(kps2)).item()
-        #hamming_dists = torch.from_numpy(sklearn.metrics.pairwise_distances(binary(kps1.cpu().to(dtype=torch.uint8), max), binary(kps2.cpu().to(dtype=torch.uint8), max), metric='hamming'))
-
+        # Compute matching
         dists, idxs = KF.match_smnn(descs1, descs2, th=0.85) # 
     return dists, img1, descs1, img2, descs2
 
+'''Detects and describes SIFT(-Feature) keypoints and matches them with the 
+smnn function.'''
 def kornia_matcher_test_Desc_and_Dete_SIFTFeature(
         img1_name, img2_name, device, feature_desc_and_dete):
     # Load images from the given paths
@@ -827,10 +953,9 @@ def kornia_matcher_test_Desc_and_Dete_SIFTFeature(
     with torch.inference_mode():
         input = {"image0": img1, "image1": img2}
 
-        # mnn works very poorly here, but snn works amazingly
         matcher = kornia.feature.LocalFeatureMatcher(
             feature_desc_and_dete, 
-            kornia.feature.DescriptorMatcher('smnn', 0.85)) # kornia.feature.DescriptorMatcher('smnn', 0.85))
+            kornia.feature.DescriptorMatcher('smnn', 0.85))
         out = matcher(input)
         confidence = out['confidence']
         keypoints1 = out['keypoints0']
@@ -838,6 +963,8 @@ def kornia_matcher_test_Desc_and_Dete_SIFTFeature(
     
     return confidence, img1, keypoints1, img2, keypoints2
 
+'''Detects and describes keypoints with GFTTAffNetHardNet and matches 
+them with the smnn function.'''
 def kornia_matcher_test_Desc_and_Dete_GFTTAffNetHardNet(
         img1_name, img2_name, device, feature_desc_and_dete):
     # Load images from the given paths
@@ -849,10 +976,9 @@ def kornia_matcher_test_Desc_and_Dete_GFTTAffNetHardNet(
     with torch.inference_mode():
         input = {"image0": img1, "image1": img2}
 
-        # mnn works very poorly here, but snn works amazingly
         matcher = kornia.feature.LocalFeatureMatcher(
             feature_desc_and_dete, 
-            kornia.feature.DescriptorMatcher('smnn', 0.85)) # kornia.feature.DescriptorMatcher('smnn', 0.85))
+            kornia.feature.DescriptorMatcher('smnn', 0.85))
         out = matcher(input)
         confidence = out['confidence']
         keypoints1 = out['keypoints0']
@@ -860,7 +986,9 @@ def kornia_matcher_test_Desc_and_Dete_GFTTAffNetHardNet(
     
     return confidence, img1, keypoints1, img2, keypoints2
 
-def kornia_matcher_test_Desc_and_Dete_KeyNetHardNet(
+'''Detects and describes keypoints with KeyNetAffNetHardNet and matches 
+them with the smnn function.'''
+def kornia_matcher_test_Desc_and_Dete_KeyNetAffNetHardNet(
         img1_name, img2_name, device, feature_desc_and_dete):
     # Load images from the given paths
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.GRAY32, 
@@ -871,10 +999,9 @@ def kornia_matcher_test_Desc_and_Dete_KeyNetHardNet(
     with torch.inference_mode():
         input = {"image0": img1, "image1": img2}
 
-        # mnn works very poorly here, but snn works amazingly
         matcher = kornia.feature.LocalFeatureMatcher(
             feature_desc_and_dete, 
-            kornia.feature.DescriptorMatcher('smnn', 0.85)) # kornia.feature.DescriptorMatcher('snn', 0.82))
+            kornia.feature.DescriptorMatcher('smnn', 0.85))
         out = matcher(input)
         confidence = out['confidence']
         keypoints1 = out['keypoints0']
@@ -888,26 +1015,8 @@ def kornia_matcher_test_Desc_and_Dete_KeyNetHardNet(
 #
 #######################################################################
 
-def descriptor_test(img1_name, img2_name, device, 
-                              LocalFeature):
-    # Load images from the given paths
-    img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
-                           device=device)[None, ...]        
-    img2 = K.io.load_image(img2_name, K.io.ImageLoadType.RGB32, 
-                           device=device)[None, ...]
-
-    with torch.inference_mode():
-        lafs1, resps1, descs1 = LocalFeature(img1)
-        lafs2, resps2, descs2 = LocalFeature(img2)
-
-        # Compute distances of the matching
-        dists, idxs = KF.match_mnn(descs1[0], descs2[0])
-
-        # Compute distances of the matching
-        dists, idxs = KF.match_smnn(descs1, descs2, th=0.85)
-    
-    return dists, img1, descs1, img2, descs2
-
+# Influenced by: https://kornia.github.io/tutorials/nbs/descriptors_matching.html
+'''Testing OpenCV SIFT with fginn matching.'''
 def kornia_fginn_SIFT_test(img1_name, img2_name, device, 
                               feature_extractor):
     # Load images from the given paths
@@ -922,13 +1031,15 @@ def kornia_fginn_SIFT_test(img1_name, img2_name, device,
         kps1, descs1 = sift.detectAndCompute(img1, None)
         kps2, descs2 = sift.detectAndCompute(img2, None)
 
-        # Converting to kornia for matching via AdaLAM
+        # Converting OPenCV SIFT keypoints to LAFs
         lafs1 = laf_from_opencv_SIFT_kpts(kps1)
         lafs2 = laf_from_opencv_SIFT_kpts(kps2)
 
         # Compute distances of the matching
-        dists, idxs = KF.match_fginn(torch.from_numpy(descs1), torch.from_numpy(descs2), lafs1, lafs2, 
-                                     th=0.85)
+        dists, idxs = KF.match_fginn(torch.from_numpy(descs1), 
+                                     torch.from_numpy(descs2), 
+                                     lafs1, lafs2, th=0.85)
+        
         return dists, img1, lafs1, img2, lafs2
 
 # Kornia also supports OpenCV [NOT WORKING YET]
@@ -950,6 +1061,7 @@ def kornia_matching_OpenCV_test(img1_name, img2_name, device):
     return dists, img1, descs1, img2, descs2
 
 # https://kornia.github.io/tutorials/nbs/image_matching_lightglue.html
+'''First tests with the kornia library.'''
 def kornia_lightglue_matching(
         img1_name, img2_name, device, matcher, feature_extractor):
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
@@ -977,12 +1089,7 @@ def kornia_lightglue_matching(
     return dists, img1, kps1, img2, kps2, idxs
 
 # https://kornia.github.io/tutorials/nbs/image_matching_lightglue.html
-def get_matching_keypoints(kp1, kp2, idxs):
-    mkpts1 = kp1[idxs[:, 0]]
-    mkpts2 = kp2[idxs[:, 1]]
-    #print(len(mkpts1), len(mkpts2))
-    return mkpts1, mkpts2
-
+'''First tests with the kornia library.'''
 def kornia_disk_lightglue_matching(
         img1_name, img2_name, device, matcher, feature_extractor):
     img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
@@ -1026,16 +1133,58 @@ def kornia_disk_lightglue_matching(
 
     return inliers, img1, kps1, img2, kps2, idxs
 
+''' CornerGTFF with SIFTDescriptor TEST'''
+def kornia_detector_test_CornerGTFF_SIFT(
+        img1_name, img2_name, device, feature_extractor):
+    # Load images from the given paths
+    img1 = K.io.load_image(img1_name, K.io.ImageLoadType.RGB32, 
+                           device=device)[None, ...]        
+    img2 = K.io.load_image(img2_name, K.io.ImageLoadType.RGB32, 
+                           device=device)[None, ...]
+
+    # Applying Detectors
+    img1 = kornia.feature.dog_response_single(img1, sigma1=1.0, 
+                                              sigma2=1.6)
+    img1 = kornia.feature.dog_response_single(img2, sigma1=1.0, 
+                                              sigma2=1.6)
+
+    with torch.inference_mode():
+        # Concatinate images
+        inp = torch.cat([img1, img2], dim=0)
+
+        # Use the feature_extractor, disk as the standard, to detect 
+        # the features of the concatinated image
+        num_features = 128
+        features1, features2 = feature_extractor(
+            inp, num_features, pad_if_not_divisible=True)
+        kps1, descs1 = features1.keypoints, features1.descriptors
+        kps2, descs2 = features2.keypoints, features2.descriptors
+
+        # Compute matching
+        dists, idxs = KF.match_smnn(descs1, descs2, th=0.85)
+    
+    return dists, img1, kps1, img2, kps2
+
+
+#######################################################################
 # Main function  ------------------------------------------------------
+#######################################################################
+
+'''This functions takes a directory to images and a method (from
+MATCHING_METHODS) and computes the matching for the images with the
+given method. If image_limit is a positive number, the number of images 
+the matching is computed upon is reduced.'''
 def extract_kornia_matches_in_directory(
         data_dir, method=1, image_limit=-1, print_log=False):
+    
     device = K.utils.get_cuda_or_mps_device_if_available()
     print(device)
 
     matches = {}
 
-    # Define the matchers used in the methods later here, 
-    # so they only get created once:
+    # Creates a MatchingHandler with the chosen method.
+    # The MatchingHandler actually does all the matching with the 
+    # images, while this function only is the frame
     mh = MatchingHandler(method=method)
 
     #create image dictionary
@@ -1049,7 +1198,7 @@ def extract_kornia_matches_in_directory(
         if ((image_limit > 0) & (counter_1 > image_limit)):
                 break
 
-    # extract matches 
+    # Extract matches. Counters here used for the log and image limit.
     counter_2 = 0
     for root1, dirs1, files1 in os.walk(data_dir, topdown=False):
         # Counter for progress printing
@@ -1057,18 +1206,24 @@ def extract_kornia_matches_in_directory(
             counter_total = min(image_limit, len(files1))
         else:
             counter_total = len(files1)
+
         for name1 in files1:
             counter_2 += 1
             counter_3 = 0
+
+            # Path for image one
             img1 = os.path.join(root1, name1)
             for root2, dirs2, files2 in os.walk(data_dir, topdown=False):
                 for name2 in files2:
                     counter_3 += 1
+
+                    # Path for image 2
                     img2 = os.path.join(root2, name2)
 
-                    if img1 == img2:
-                        matches[name1][name2] = mh.diagonal_forward(img1, img2) # To avoid wrong orderings in columns
-
+                    # Apply matching handler, receive similarity score
+                    if img1 == img2: #Filter out pairs of the same image
+                        matches[name1][name2] = \
+                            mh.diagonal_forward(img1, img2)
                     else:
                         if name1 in matches:
                             if name2 in matches[name1]:
@@ -1080,14 +1235,18 @@ def extract_kornia_matches_in_directory(
                     break
             if print_log:
                 print(counter_2, "/", counter_total)
+
+
             if(counter_2 >= counter_total):
                 df = pd.DataFrame.from_dict(matches, orient="index")
                 df.fillna(0, inplace=True)
                 return df
+            
     df = pd.DataFrame.from_dict(matches, orient="index")
     df.fillna(0, inplace=True) # Replace NA values with zeros
     return df
 
+# Possible methods from the MatchingHandler
 MATCHING_METHODS = [
     "ORB", # 0
     "matcher nn",
@@ -1113,31 +1272,45 @@ MATCHING_METHODS = [
     "dete_and_dest DISK",
     "dete_and_dest SIFTFeature",
     "dete_and_dest GFTTAffNetHardNet",
-    "dete_and_dest KeyNetHardNet",
+    "dete_and_dest KeyNetAffNetHardNet",
     "OpenCV 2nn",
     "Testing",
     "smnn_abs_count",
-    "kornia nn ORB"
+    "kornia nn ORB",
+    "OpenCV smnn",
+    "smnn DISK with estimator USAC_ACCURATE" # 30
 ]
 
+'''A class, that makes usage of all the keypoint detection, description
+and matching functions easy. It mainly contains three steps:
+- Initialize creates instances of objects needed in the matching 
+    process, so they get only created once.
+- The forward method takes two images and computes the matching and 
+    returnes the similarity score.
+- The diagonal forward method returnes the standard value for matchings 
+    of the same image. Appears to have mostly no influence.'''
 class MatchingHandler():
     detector = None
     descriptor = None
     matcher = None
     method = 0
 
-    def __init__(self, method):
+    # Initialize function, sets the method
+    def __init__(self, method: int = 0):
         self.device = K.utils.get_cuda_or_mps_device_if_available()
         print("Matching Handler started with device " + str(self.device) + ".")
         self.switch_method(method)
     
-    def switch_method(self, method: int) -> None:
+    # Switches the method, calling the instancing of new classes
+    def switch_method(self, method: int = 0) -> None:
         if self.method == method:
             return
         self.method = method
         self.initialize_method()
         print("Matching Handler now using method " + str(method) + ": " + str(MATCHING_METHODS[method]) + ".")
 
+    # Resets the detector, descriptor and matcher and loads in new ones,
+    # Depending on the method.
     def initialize_method(self) -> None:
         # Reset computation function values for a cleaner algorithm
         self.detector, self.descriptor, self.matcher = None, None, None
@@ -1203,7 +1376,39 @@ class MatchingHandler():
                 self.descriptor = kornia.feature.SOSNet(pretrained=True).to(self.device)
             case 19:
                 # kornia_test_Desc_and_Dete_SOLD2_detector
-                self.descriptor = kornia.feature.SOLD2(pretrained=True, config=None).to(self.device)  
+                new_cfg: Dict[str, Any] = {
+                    "backbone_cfg": {"input_channel": 1, "depth": 4, "num_stacks": 2, "num_blocks": 1, "num_classes": 5},
+                    "use_descriptor": True,
+                    "grid_size": 4, # [8]
+                    "keep_border_valid": True,
+                    "detection_thresh": 0.0153846,  # = 1/65: threshold of junction detection
+                    "max_num_junctions": 125,  # [500] maximum number of junctions per image
+                    "line_detector_cfg": {
+                        "detect_thresh": 0.5,
+                        "num_samples": 32, # [64]
+                        "inlier_thresh": 0.99,
+                        "use_candidate_suppression": True,
+                        "nms_dist_tolerance": 2.0, # [3.0]
+                        "use_heatmap_refinement": True,
+                        "heatmap_refine_cfg": {
+                            "mode": "local",
+                            "ratio": 0.2,
+                            "valid_thresh": 0.001,
+                            "num_blocks": 10, # [20]
+                            "overlap_ratio": 0.5,
+                        },
+                        "use_junction_refinement": True,
+                        "junction_refine_cfg": {"num_perturbs": 9, "perturb_interval": 0.25},
+                    },
+                    "line_matcher_cfg": {
+                        "cross_check": True,
+                        "num_samples": 3, # [5]
+                        "min_dist_pts": 4, # [8]
+                        "top_k_candidates": 5, # [10]
+                        "grid_size": 2, # [4]
+                    },
+                }
+                self.descriptor = kornia.feature.SOLD2(pretrained=True, config=new_cfg).to(self.device)  
             case 20:
                 # kornia_test_Desc_and_Dete_DeDoDo
                 self.descriptor = kornia.feature.DeDoDe().from_pretrained().to(self.device)
@@ -1234,9 +1439,17 @@ class MatchingHandler():
             case 28:
                 # ORB with kornia nn matching
                 pass
+            case 29:
+                # smnn in OpenCV
+                pass
+            case 30:
+                # estimator test (else like 4)
+                self.detector = KF.DISK.from_pretrained("depth").to(self.device)
             case _:
                 print("Method " + str(self.method) + " does not exists")
 
+    # Computes a matching of two images (given from paths) and returns
+    # the similarity score
     def forward(self, image_1: str, image_2: str) -> float:
         match self.method:
             case 0:
@@ -1374,7 +1587,7 @@ class MatchingHandler():
                 return torch.sum(matches_found[0]).cpu().detach().numpy()
             case 24:
                 # kornia_test_Desc_and_Dete_KeyNetHardNet
-                matches_found = kornia_matcher_test_Desc_and_Dete_KeyNetHardNet(image_1, image_2, device=self.device, feature_desc_and_dete=self.descriptor)
+                matches_found = kornia_matcher_test_Desc_and_Dete_KeyNetAffNetHardNet(image_1, image_2, device=self.device, feature_desc_and_dete=self.descriptor)
 
                 return torch.sum(matches_found[0]).cpu().detach().numpy()
             case 25:
@@ -1405,10 +1618,28 @@ class MatchingHandler():
                     if m <= 350: # standard 45
                         good_matches.append(m)
                 return len(good_matches)
+            case 29:
+                # smnn in OpenCV
+                # DOES NOT WORK, BECAUSE CROSS_CHECK AND RATIO TEST ARE
+                # MUTUALLY EXCLUSIVE FOR THE BFMatcher
+                matches_found = detect_keypoints_and_descriptors_knn_match(image_1, image_2, ch=True)
+
+                good_matches = []
+                for m in matches_found[0]:
+                    if m.distance <= 45: # standard 45
+                        good_matches.append(m)
+                return len(good_matches)
+            case 30:
+                # estimator test (else like 4)
+                matches_found = kornia_matcher_test_smnn_estimator(image_1, image_2, device=self.device, feature_extractor=self.detector)
+                x = matches_found[0]
+                #return x.sum().item()
+                return x.sum().item()
             case _:
                 pass
         return None
     
+    # Returns a standard value for the matching
     def diagonal_forward(self, image_1: str, image_2: str) -> float:
         match self.method:
             case 0:
@@ -1497,6 +1728,12 @@ class MatchingHandler():
             case 27:
                 return 0
             case 28:
+                return 0
+            case 29:
+                # smnn in OpenCV
+                return 0
+            case 30:
+                # estimator test (else like 4)
                 return 0
             case _:
                 pass
