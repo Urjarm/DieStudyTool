@@ -322,12 +322,14 @@ def add_path_to_df(df: pd.DataFrame, path: str, name_column: str = 'Unnamed: 0',
 		df.set_index('name', inplace=True)
 	return df
 
+'''Used to gather paths to add to matching files.'''
 def get_paths(data_dir):
 	result = []
 	for root, dirs, files in os.walk(data_dir, topdown=False):
 		for name in files:
 			img_pth = os.path.join(root, name)
-			img_pth = img_pth.replace("/", "\\")
+			img_pth = img_pth.replace("/", os.sep)
+			img_pth = img_pth.replace("\\", os.sep)
 			result.append(img_pth)
 	return result
 
@@ -562,13 +564,6 @@ def compute_clustering_AGLP(
 		'object_number', 'final_obverse_CL']).set_index("object_number")
 	return clustered_df
 
-def coin_name_format_to_file_name(file, column_name):
-	'''Makes the filenames from the image names in the .csv files.'''
-	for index in file.index:
-		file.loc[index, column_name] = \
-			file[column_name][index].replace("/", "-") + "A.JPG"
-	return file
-
 # Copied and modified from https://github.com/ClementCornet/Auto-Die-Studies
 def AGLP_clustering(sim):
 	"""
@@ -611,7 +606,7 @@ def create_comparison_file(
 		end: int, 
 		target_file: str = "overview.csv", 
 		number_of_images: int = -1, 
-		true_values_file: str = "data_coins/class VI final list.xlsx",
+		true_values_file: str = os.path.join("data_coins", "class VI final list.xlsx"),
 		distance_function: list[int] = [1,1],
 		clusterers: list[AgglomerativeClustering] = [
 			AgglomerativeClustering(n_clusters=1, linkage='complete', metric='precomputed'),
