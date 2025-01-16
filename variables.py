@@ -2,11 +2,11 @@
 # Windows-paths and '/' for Linux-paths. That paths may contain 
 # multiple folders of images.
 # Example for Windows: "C:\\Folder\\...\\images\\"
-images_directory: str = "/home/student_01/Projects/Datasets/dataset_coins_GL_reverse/"
+images_directory: str = "/home/student_01/Projects/Datasets/MA_Fiedler_coins_datasets/Stater_VI/obverse/"
 
 # Path were the preprocessed images and the results will be stored.
 # Same rules for the path as for "images_path"
-results_directory: str = "/home/student_01/Projects/Datasets/coins_GL_reverse_results/"
+results_directory: str = "/home/student_01/Projects/Datasets/MA_Fiedler_coins_datasets/Stater_VI/obverse_results/"
 # Methods to use for matching and distance comnputation. The different
 # functions corresponding to the numbers are shown at the end of this file.
 matching_computation_method: int = 4
@@ -17,10 +17,16 @@ distance_computation_method: int = 2
 # The file 'clustering_file_name' contains the clustering, which can
 # be viewed in Orange.
 matching_file_name: str = "matching.csv"
-clustering_file_name: str = "clustering_reverse_4_2_50.csv"
+clustering_file_name: str = "clustering_obverse_4_2_50.csv"
 
 # The number of clusters, that the coins should be distributed to.
 number_of_clusters: int = 50
+
+# File to evaluate the results from the clustering from (from the column 'final obverse')
+ground_truth_file: str = "/home/student_01/Projects/Datasets/MA_Fiedler_coins_datasets/Stater_VI/class VI final list.xlsx"
+
+# File, where that values for the resulting graph are saved.
+graph_file_name: str = "result_graph.csv"
 
 ####################################################################################
 # Overviews

@@ -338,7 +338,7 @@ def get_paths(data_dir):
 ########################################################################
 
 def compute_assigning_score(
-		path_to_solution: str, 
+		solution_file: pd.DataFrame, 
 		distance_score_file_name: str, 
 		side:bool = True, 
 		clusterer: AgglomerativeClustering = AgglomerativeClustering(
@@ -359,7 +359,7 @@ def compute_assigning_score(
 	## 2 SCORE COMPUTATION
 
 	# Read in solution file 
-	temp_solution = pd.read_excel(path_to_solution)
+	temp_solution = solution_file
 
 	if side:
 		temp_solution = coin_name_format_to_file_name(
