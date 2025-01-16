@@ -1,5 +1,6 @@
 # Path to the folder, where the images of the coins are. Use '\\' for 
-# Windows-paths and '/' for Linux-paths.
+# Windows-paths and '/' for Linux-paths. That paths may contain 
+# multiple folders of images.
 # Example for Windows: "C:\\Folder\\...\\images\\"
 images_directory: str = "/home/student_01/Projects/Datasets/dataset_coins_GL_reverse/"
 
