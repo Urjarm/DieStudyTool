@@ -651,11 +651,14 @@ def create_comparison_file(
 			result.to_csv(target_file)
 	result.to_csv(target_file)
 
+'''For 0% to 100%, in steps of 10%, values are computed for how many 
+clusters contain at least that many % of coins with the same die and how
+many coins are included in these clusters.'''
 def analyseClustering(
 		matching_file_path: str, 
 		solution_file_path: str,
 		distance_function: int,
-		side:bool = True,
+		side: bool = True,  # This argument could be removed, as it is not implemented
 		clusterer: AgglomerativeClustering = AgglomerativeClustering(
 			n_clusters=30, linkage='complete', metric='precomputed')
 		) -> None:
@@ -670,16 +673,12 @@ def analyseClustering(
 	# Read in solution file 
 	temp_solution = pd.read_excel(solution_file_path)
 
-	if side:
-		temp_solution = coin_name_format_to_file_name(
-			temp_solution, "object_number")
-		solution_df = temp_solution[
-			["object_number", "final obverse"]].set_index(
-				"object_number").rename(columns={
-					"final obverse": "final_obverse_GT"})
-	else:
-		print("Not implemented!")
-		return
+	temp_solution = coin_name_format_to_file_name(
+		temp_solution, "object_number")
+	solution_df = temp_solution[
+		["object_number", "final obverse"]].set_index(
+			"object_number").rename(columns={
+				"final obverse": "final_obverse_GT"})
 
 	clusterings = pd.concat([solution_df, clustered_df], axis=1, join="inner")
 
@@ -706,6 +705,7 @@ def analyseClustering(
 	return None
 
 # True neg wrong atm
+# THIS FUNCTION AND THE FOLLOWING ARE NOT USED FURTHER
 def compute_perfect_scores_rand_index(
 		path_to_solution: str, filename: str, start: int, end: int) -> None:
 	''' Compute the maximum percentages of true positives and negatives
@@ -821,6 +821,7 @@ def count_true_negatives(clustering_1, clustering_2):
 	amount = (clustering_1.ne(clustering_1.T)&
 		   clustering_2.ne(clustering_2.T)).sum().iloc[:-1].sum()
 	return amount
+# FROM HERE ON, THE FUNCTIONS ARE USED AGAIN
 
 def clustering_differences(clustering_1, clustering_2):
 	''' Looks at two clusterings and returns statistics about the
