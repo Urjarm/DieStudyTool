@@ -25,5 +25,7 @@ In order to run this program, the "DieStudyTool.ipynb" has to be executed. Befor
 
 **(Optional)**: The variables "matching_computation_method" and "distance_computation_method" can be used to change the function that is used for computing the solution. The preselected functions proved to be the best in (CITATION). "number_of_clusters" can be used to change the number of clusters that the tool outputs. The two remaining variables "matching_file_name" and "clustering_file_name" merely change the name of the output files containing the results.
 
-## License
-ADD LICENSE
+## Affiliation
+This tool was developed as part of a thesis for the Big Data Lab of the Goethe Universität in Frankfurt am Main.
+http://www.bigdata.uni-frankfurt.de/
+https://github.com/Frankfurt-BigDataLab
